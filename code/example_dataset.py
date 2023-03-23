@@ -13,7 +13,7 @@ image_transform = transforms.Compose([
     transforms.ToTensor()]
     # transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))]
 )
-data_dir = "./data/"
+data_dir = "../data/"
 dataset_name = "C-CUB"
 comp_type = "color"
 split = "test"

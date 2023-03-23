@@ -1,7 +1,8 @@
 import torch
-import clip
+# import clip
 from torch import nn
-from pytorch_pretrained_gans import make_gan
+# from pytorch_pretrained_gans import make_gan
+
 
 class XModel(nn.Module):
 
@@ -11,17 +12,21 @@ class XModel(nn.Module):
             clip_model,
             gan_model,
     ):
+        super().__init__()
         self.device = device
         self.clip_model = clip_model
         self.gan_model = gan_model
+        self.map_layer = nn.Sequential(
+            nn.Linear(self.clip_model.visual.output_dim, self.gan_model.dim_z)
+        )
 
-    def get_text_latent_feature(self, tokenized_prompt):
+    def get_text_latent_feature(self, tokenized_prompts):
         """
         Get the text latent feature vector
-        :param tokenized_prompt: B * S Tensor
+        :param tokenized_prompts: B * S Tensor
         :return: text latent feature vector [B * H]
         """
-        text_latent_feature = self.model.encode_text(tokenized_prompt)
+        text_latent_feature = self.model.encode_text(tokenized_prompts)
         return text_latent_feature
 
     def get_iamge_latent_feature(self, images):
@@ -33,12 +38,8 @@ class XModel(nn.Module):
         text_latent_feature = self.model.encode_image(images)
         return text_latent_feature
 
-
-device = "cuda" if torch.cuda.is_available() else "cpu"
-clip_model, clip_preprocess = clip.load("ViT-B/32", device=device)
-gan_model = make_gan(gan_type='biggan')
-model = XModel(
-    device=device,
-    clip_model=clip_model,
-    gan_model=gan_model
-)
+    def forward(self, tokenized_prompts):
+        z_t = self.get_text_latent_feature(tokenized_prompts)
+        z_tilde = self.map_layer(z_t)  # [B, H']
+        images = self.gan_model(z_tilde)  # [B, I, I]
+        return images, z_t
