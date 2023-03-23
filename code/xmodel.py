@@ -26,19 +26,19 @@ class XModel(nn.Module):
 
         # Initialize the map layer
         self.mu_map_layer = nn.Sequential(
-            nn.Linear(self.clip_model.visual.output_dim, args.hidden),
-            nn.Relu(),
-            nn.Linear(args.hidden, self.gan_model.dim_z)
+            nn.Linear(self.clip_model.visual.output_dim, args.hidden_size),
+            nn.ReLU(),
+            nn.Linear(args.hidden_size, self.gan_model.dim_z)
         )
         self.log_sigma_map_layer = nn.Sequential(
-            nn.Linear(self.clip_model.visual.output_dim, args.hidden),
-            nn.Relu(),
-            nn.Linear(args.hidden, self.gan_model.dim_z)
+            nn.Linear(self.clip_model.visual.output_dim, args.hidden_size),
+            nn.ReLU(),
+            nn.Linear(args.hidden_size, self.gan_model.dim_z)
         )
 
         # Initialize the optimizer and loss function
         params = list(self.mu_map_layer.parameters()) + \
-                list(log_sigma_map_layer.parameters())
+                list(self.log_sigma_map_layer.parameters())
         self.optimizer = Adam(params, lr=args.lr)
         self.loss_fn = nn.MSELoss()
 
@@ -48,22 +48,23 @@ class XModel(nn.Module):
         :param tokenized_prompts: B * S Tensor
         :return: text latent feature vector [B * H]
         """
-        text_latent_feature = self.model.encode_text(tokenized_prompts)
+        text_latent_feature = self.clip_model.encode_text(tokenized_prompts)
         return text_latent_feature
 
-    def get_iamge_latent_feature(self, images):
+    def get_image_latent_feature(self, images):
         """
         Get the image latent feature vector
         :param images: B * I * I
         :return: image latent feature vector [B * H]
         """
-        text_latent_feature = self.model.encode_image(images)
+        text_latent_feature = self.clip_model.encode_image(images)
         return text_latent_feature
 
     def forward(self, tokenized_prompts):
         z_t = self.get_text_latent_feature(tokenized_prompts)
-        z_mu = self.mu_map_layer(z_t) # [B, H']
-        z_log_sigma = self.log_sigma_map_layer(z_t) # [B, H']
+        z_t.requires_grad = True
+        z_mu = self.mu_map_layer(z_t)  # [B, H']
+        z_log_sigma = self.log_sigma_map_layer(z_t)  # [B, H']
         z_sigma = torch.exp(z_log_sigma)
         eps = torch.randn(z_mu.shape).to(self.device)
         z_tilde = z_mu + z_sigma * eps
