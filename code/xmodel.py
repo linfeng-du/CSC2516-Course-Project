@@ -1,8 +1,7 @@
 import torch
-# import clip
-from torch import nn
-# from pytorch_pretrained_gans import make_gan
 
+from torch import nn
+from torch.optim import Adam
 
 class XModel(nn.Module):
 
@@ -11,14 +10,37 @@ class XModel(nn.Module):
             device,
             clip_model,
             gan_model,
+            args
     ):
         super().__init__()
         self.device = device
         self.clip_model = clip_model
         self.gan_model = gan_model
-        self.map_layer = nn.Sequential(
-            nn.Linear(self.clip_model.visual.output_dim, self.gan_model.dim_z)
+        self.image_size = self.clip_model.visual.input_resolution
+
+        # Freeze the pretrained components
+        for param in self.clip_model.parameters():
+            param.requires_grad = False
+        for param in self.gan_model.parameters():
+            param.requires_grad = False
+
+        # Initialize the map layer
+        self.mu_map_layer = nn.Sequential(
+            nn.Linear(self.clip_model.visual.output_dim, args.hidden),
+            nn.Relu(),
+            nn.Linear(args.hidden, self.gan_model.dim_z)
         )
+        self.log_sigma_map_layer = nn.Sequential(
+            nn.Linear(self.clip_model.visual.output_dim, args.hidden),
+            nn.Relu(),
+            nn.Linear(args.hidden, self.gan_model.dim_z)
+        )
+
+        # Initialize the optimizer and loss function
+        params = list(self.mu_map_layer.parameters()) + \
+                list(log_sigma_map_layer.parameters())
+        self.optimizer = Adam(params, lr=args.lr)
+        self.loss_fn = nn.MSELoss()
 
     def get_text_latent_feature(self, tokenized_prompts):
         """
@@ -40,6 +62,10 @@ class XModel(nn.Module):
 
     def forward(self, tokenized_prompts):
         z_t = self.get_text_latent_feature(tokenized_prompts)
-        z_tilde = self.map_layer(z_t)  # [B, H']
+        z_mu = self.mu_map_layer(z_t) # [B, H']
+        z_log_sigma = self.log_sigma_map_layer(z_t) # [B, H']
+        z_sigma = torch.exp(z_log_sigma)
+        eps = torch.randn(z_mu.shape).to(self.device)
+        z_tilde = z_mu + z_sigma * eps
         images = self.gan_model(z_tilde)  # [B, I, I]
         return images, z_t
