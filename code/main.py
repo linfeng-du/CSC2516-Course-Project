@@ -8,26 +8,27 @@ from pytorch_pretrained_gans import make_gan
 from tqdm import tqdm
 
 
-def train_for_one_epoch(xmodel, train_dl, args):
+def train_for_one_epoch(xmodel, train_dl):
     train_loss = 0.0
     for images, tokenized_prompts, image_ids, caption_ids in tqdm(train_dl):
 
         xmodel.optimizer.zero_grad()
 
         gan_images, z_t = xmodel(tokenized_prompts)
-        z_i = xmodel.get_image_latent_feature(images)
+        gan_images = xmodel.resize(gan_images)
+        z_i = xmodel.get_image_latent_feature(gan_images)
 
-        loss = xmodel.loss_fn(z_t, z_i)
+        loss = xmodel.loss_fn(z_t, z_i).mean()
         loss.backward()
         xmodel.optimizer.step()
 
         train_loss += loss.item()
 
-    train_loss /= len(train_dl.dataset)
+    train_loss /= len(train_dl)
     return train_loss
 
 
-def eval_model(model, val_dl, args):
+def eval_model(model, val_dl):
     pass
 
 def save_model(xmodel, args):
@@ -72,12 +73,12 @@ def train(args):
     max_loss = float('inf')
     for epoch in range(args.epochs):
         print(f"Epoch {epoch}")
-        train_loss = train_for_one_epoch(xmodel, train_dl, args)
+        train_loss = train_for_one_epoch(xmodel, train_dl)
         print(f"Train loss: {train_loss}")
         if train_loss < max_loss:
             save_model(xmodel, args)
             max_loss = train_loss
-        eval_model(xmodel, val_dl, args)
+        eval_model(xmodel, val_dl)
 
 def get_args():
     parser = argparse.ArgumentParser()
