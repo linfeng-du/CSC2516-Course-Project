@@ -59,7 +59,7 @@ class XModel(nn.Module):
         return text_latent_feature
 
     def forward(self, tokenized_prompts):
-        z_t = self.get_text_latent_feature(tokenized_prompts)
+        z_t = self.get_text_latent_feature(tokenized_prompts).float()
         # z_t.requires_grad = True
         z_mu = self.mu_map_layer(z_t)  # [B, H']
         z_log_sigma = self.log_sigma_map_layer(z_t)  # [B, H']

@@ -13,12 +13,12 @@ def train_for_one_epoch(xmodel, train_dl):
     for images, tokenized_prompts, image_ids, caption_ids in tqdm(train_dl):
 
         xmodel.optimizer.zero_grad()
-
+        tokenized_prompts = tokenized_prompts.to(xmodel.device)
         gan_images, z_t = xmodel(tokenized_prompts)
         gan_images = xmodel.resize(gan_images)
         z_i = xmodel.get_image_latent_feature(gan_images)
 
-        loss = xmodel.loss_fn(z_t, z_i).mean()
+        loss = -xmodel.loss_fn(z_t, z_i).mean()
         loss.backward()
         xmodel.optimizer.step()
 
@@ -63,7 +63,7 @@ def train(args):
         clip_model,
         gan_model,
         args
-    )
+    ).to(device)
 
     # Get the dataloader
     train_dl = get_dataloader("train", xmodel, args)
