@@ -18,6 +18,7 @@ class XModel(nn.Module):
         self.clip_model = clip_model
         self.gan_model = gan_model
         self.image_size = self.clip_model.visual.input_resolution
+        self.args = args
 
         # Initialize the map layer
         self.mu_map_layer = nn.Sequential(
@@ -37,8 +38,9 @@ class XModel(nn.Module):
         # Initialize the optimizer and loss function
         params = list(self.mu_map_layer.parameters()) + \
                 list(self.log_sigma_map_layer.parameters())
+        if not self.args.finetune_gan:
+            params += list(self.gan_model.parameters())
         self.optimizer = Adam(params, lr=args.lr)
-        self.loss_fn = nn.CosineSimilarity(dim=1)
 
     def get_text_latent_feature(self, tokenized_prompts):
         """
@@ -58,6 +60,29 @@ class XModel(nn.Module):
         text_latent_feature = self.clip_model.encode_image(images)
         return text_latent_feature
 
+    def kl_divergence(self, mu, sigma):
+        """
+        Get the kl divergence respect to standard gaussian
+        :param mu: B * O
+        :param sigma: B * O
+        :return: kl: scalar
+        """
+        kl = -0.5 * torch.sum(1 + 2 * torch.log(sigma) - mu.pow(2) - sigma.pow(2), dim=-1).mean()
+        return kl * self.args.kl
+
+    def loss_fn(self, gan_image_eb, text_eb, mu, sigma):
+        """
+        Get the loss
+        :param gan_image_eb: B * EB
+        :param text_eb: B * EB
+        :param mu: B * O
+        :param sigma: B * O
+        :return: loss: scalar
+        """
+        cosine_sim = nn.CosineSimilarity(dim=-1)
+        loss = -cosine_sim(gan_image_eb, text_eb).mean() + self.kl_divergence(mu, sigma)
+        return loss
+
     def forward(self, tokenized_prompts):
         z_t = self.get_text_latent_feature(tokenized_prompts).float()
         # z_t.requires_grad = True
@@ -67,4 +92,4 @@ class XModel(nn.Module):
         eps = torch.randn(z_mu.shape).to(self.device)
         z_tilde = z_mu + z_sigma * eps
         images = self.gan_model(z_tilde)  # [B, I, I]
-        return images, z_t
+        return images, z_t, z_mu, z_sigma
