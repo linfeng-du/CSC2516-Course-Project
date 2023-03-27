@@ -38,7 +38,7 @@ class XModel(nn.Module):
         # Initialize the optimizer and loss function
         params = list(self.mu_map_layer.parameters()) + \
                 list(self.log_sigma_map_layer.parameters())
-        if not self.args.finetune_gan:
+        if self.args.finetune_gan:
             params += list(self.gan_model.parameters())
         self.optimizer = Adam(params, lr=args.lr)
 
