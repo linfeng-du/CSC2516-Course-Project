@@ -25,18 +25,19 @@ def seed_everything(seed=42):
     torch.backends.cudnn.deterministic = True
 
 
-def get_imagenet_label(args, xmodel, z_t, image_ids, imagenet_label_dict):
+def get_imagenet_label(args, xmodel, image_ids, imagenet_label_dict):
     xmodel.eval()
-    labels = torch.zeros((len(image_ids))).int().to(z_t.device)
+    labels = torch.zeros((len(image_ids))).int().to(xmodel.device)
     for i in range(len(image_ids)):
         label_list = imagenet_label_dict.get(image_ids[i])
         if label_list is None:
             labels[i] = torch.randint(0, 1000, (1,))
         else:
-            labels[i] = random.choice(label_list[:args.k])[0]
+            label_list = label_list[0][:args.k]
+            labels[i] = random.choice(label_list)
 
     if args.one_hot_label:
-        labels = torch.eye(1000, dtype=torch.float, device=z_t.device)[labels]
+        labels = torch.eye(1000, dtype=torch.float, device=xmodel.device)[labels]
     return labels
 
 
@@ -49,7 +50,7 @@ def random_select_one_image(args, xmodel, val_dl, max_clip_score, imagenet_label
         z_t = xmodel.get_text_latent_feature(tokenized_prompts).float()
         z = xmodel.gan_model.sample_latent(batch_size=val_dl.batch_size).to(xmodel.device)
         if args.condition:
-            labels = get_imagenet_label(args, xmodel, z_t, image_ids, imagenet_label_dict)
+            labels = get_imagenet_label(args, xmodel, image_ids, imagenet_label_dict)
             gan_images = xmodel.gan_model(z=z, y=labels)
         else:
             gan_images = xmodel.gan_model(z)
@@ -182,6 +183,7 @@ def main(args):
     # Start training
     clip_scores = torch.zeros((args.max_images, args.batch_size * len(val_dl)))
     max_clip_score = {}
+    imagenet_label_dict = None
     if args.condition:
         args.gan_type += "_conditional" + "_k_" + str(args.k)
         dict_path = os.path.join(args.data_dir, args.dataset_name, "imagenet_labels.pkl")
@@ -229,7 +231,7 @@ def get_args():
     parser.add_argument("--gan_model_name", type=str, default="SAGAN")
     parser.add_argument("--clip_type", type=str, default="ViT-B/32")
     parser.add_argument("--max_images", type=int, default=100)
-    parser.add_argument("--k", type=int, default=1, help="top k imagenet labels to select from")
+    parser.add_argument("--k", type=int, default=10, help="top k imagenet labels to select from")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--batch_size", help='batch size', type=int, default=64)
     parser.add_argument("--hidden_size", type=int, default=128)
