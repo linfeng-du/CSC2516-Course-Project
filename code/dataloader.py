@@ -5,7 +5,7 @@ import torch
 from tqdm import tqdm
 
 
-def get_dataloader(split, model, args):
+def get_dataloader(split, model, args, shuffle=True):
 
     # Retrieve the parameters
     imsize = model.image_size
@@ -50,5 +50,5 @@ def get_dataloader(split, model, args):
         )
 
     # Wrap the dataset into dataloader and return
-    dataloader = torch.utils.data.DataLoader(dataset, batch_size=args.batch_size, drop_last=True, shuffle=True)
+    dataloader = torch.utils.data.DataLoader(dataset, batch_size=args.batch_size, drop_last=True, shuffle=shuffle)
     return dataloader
