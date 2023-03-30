@@ -128,7 +128,7 @@ def plot_epoch_clip(args, clip_scores, epoch):
     fig.savefig(plot_path)
 
 
-def plot_substitue_rate(args, substitutes):
+def plot_substitute_rate(args, substitutes):
     plot_folder = os.path.join(args.plot_dir, args.dataset_name, str(args.seed), args.gan_type + "_epoch_" + str(args.max_images))
     if not os.path.exists(plot_folder):
         os.makedirs(plot_folder)
@@ -207,15 +207,45 @@ def main(args):
     plot_clip_nums(args, clip_scores.numpy())
     for epoch in np.linspace(0, args.max_images - 1, num=10).astype(int):
         plot_epoch_clip(args, clip_scores.numpy(), epoch)
-    plot_substitue_rate(args, substitutes)
+    plot_substitute_rate(args, substitutes)
     save_tensor(args, clip_scores)
 
 
-def test(args):
+def analysis(args):
     # Start testing
-    clip_scores = torch.load(args.load_path)
-    for epoch in np.linspace(0, args.max_images - 1, num=11).astype(int):
-        plot_epoch_clip(args, clip_scores.numpy(), epoch)
+    dict = {}
+    list_k = [1, 10, 20, 50, 100, 1000]
+    for k in list_k:
+        gan_folder = ""
+        if args.gan_type == "studiogan":
+            gan_folder= os.path.join(args.gan_type, args.gan_model_name)
+        if args.condition:
+            gan_folder += "_conditional" + "_k_" + str(k)
+        load_folder = os.path.join(args.save_dir, args.dataset_name, str(args.seed), gan_folder)
+        load_file_name = "max_images_" + str(args.max_images) + ".pt"
+        load_path = os.path.join(load_folder, load_file_name)
+        dict[k] = torch.load(load_path)
+
+    plot_folder = os.path.join(args.plot_dir, args.dataset_name, str(args.seed),
+                               args.gan_type)
+    if not os.path.exists(plot_folder):
+        os.makedirs(plot_folder)
+    fig = plt.figure()
+    plt.xlabel("Num Images")
+    plt.ylabel("Avg. Best Clip Score")
+    colors = ['b', 'g', 'r', 'c', 'm', 'y', 'k', 'w']
+    i = 0
+    for k in list_k:
+        clip_scores = dict[k].numpy()
+        y = np.mean(clip_scores, axis=-1)
+        x = np.arange(1, y.shape[0] + 1)
+        plt.plot(x, y, color=colors[i % len(colors)], label=f"k={k}")
+        i += 1
+    plt.legend()
+    plot_path = os.path.join(plot_folder, f"avg  best clip score v.s. num images.png")
+    fig.savefig(plot_path)
+
+
 
 
 def get_args():
@@ -231,7 +261,7 @@ def get_args():
     parser.add_argument("--gan_model_name", type=str, default="SAGAN")
     parser.add_argument("--clip_type", type=str, default="ViT-B/32")
     parser.add_argument("--max_images", type=int, default=100)
-    parser.add_argument("--k", type=int, default=10, help="top k imagenet labels to select from")
+    parser.add_argument("--k", type=int, default=1000, help="top k imagenet labels to select from")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--batch_size", help='batch size', type=int, default=64)
     parser.add_argument("--hidden_size", type=int, default=128)
@@ -253,6 +283,6 @@ if __name__ == "__main__":
     args = get_args()
     seed_everything(seed=args.seed)
     if args.test:
-        test(args)
+        analysis(args)
     else:
         main(args)

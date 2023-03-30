@@ -32,6 +32,8 @@ import torchvision.transforms as TF
 from PIL import Image
 from scipy import linalg
 from torch.nn.functional import adaptive_avg_pool2d
+from dataset import *
+import matplotlib.pyplot as plt
 
 try:
     from tqdm import tqdm
@@ -43,20 +45,26 @@ except ImportError:
 from fid.inception import InceptionV3
 
 parser = ArgumentParser(formatter_class=ArgumentDefaultsHelpFormatter)
-parser.add_argument('--batch-size', type=int, default=50,
+parser.add_argument('--batch-size', type=int, default=64,
                     help='Batch size to use')
 parser.add_argument('--num-workers', type=int,
                     help=('Number of processes to use for data loading. '
-                          'Defaults to `min(8, num_cpus)`'))
-parser.add_argument('--device', type=str, default=None,
+                          'Defaults to `min(8, num_cpus)`'),
+                    default=0)
+parser.add_argument('--device', type=str, default="cuda",
                     help='Device to use. Like cuda, cuda:0 or cpu')
 parser.add_argument('--dims', type=int, default=2048,
                     choices=list(InceptionV3.BLOCK_INDEX_BY_DIM),
                     help=('Dimensionality of Inception features to use. '
                           'By default, uses pool3 features'))
-parser.add_argument('path', type=str, nargs=2,
-                    help=('Paths to the generated images or '
-                          'to .npz statistic files'))
+parser.add_argument("--condition", action='store_true')
+parser.add_argument("--gen_dir", type=str, default="../gen/")
+parser.add_argument("--plot_dir", type=str, default="../plot/")
+parser.add_argument("--gan_type", type=str, default="studiogan")
+parser.add_argument("--gan_model_name", type=str, default="SAGAN")
+parser.add_argument("--seed", type=int, default=42)
+parser.add_argument("--dataset_name", type=str, default="C-CUB")
+parser.add_argument("--max_images", type=int, default=100)
 
 IMAGE_EXTENSIONS = {'bmp', 'jpg', 'jpeg', 'pgm', 'png', 'ppm',
                     'tif', 'tiff', 'webp'}
@@ -99,22 +107,46 @@ def get_activations(files, model, batch_size=50, dims=2048, device='cpu',
     """
     model.eval()
 
-    if batch_size > len(files):
-        print(('Warning: batch size is bigger than the data size. '
-               'Setting batch size to data size'))
-        batch_size = len(files)
+    # if batch_size > len(files):
+    #     print(('Warning: batch size is bigger than the data size. '
+    #            'Setting batch size to data size'))
+    #     batch_size = len(files)
 
     if transforms is None:
-        transforms = TF.ToTensor()
+        transforms = TF.Compose([
+        TF.Resize((256, 256)),
+        TF.ToTensor()
+    ])
 
-    dataset = ImagePathDataset(files, transforms=transforms)
+    if files is None:
+        data_dir = "../data/"
+        dataset_name = "C-CUB"
+        comp_type = "color"
+        split = "test"
+        tokenize = True
+        # torch.manual_seed(42)
+        images_txt_path = os.path.join(data_dir, dataset_name, "images.txt")
+        bbox_txt_path = os.path.join(data_dir, dataset_name, "bounding_boxes.txt")
+        dataset = CCUBDataset(
+            data_dir,
+            dataset_name,
+            comp_type,
+            split,
+            transforms,
+            tokenize,
+            images_txt_path,
+            bbox_txt_path,
+            fid=True
+        )
+    else:
+        dataset = ImagePathDataset(files, transforms=transforms)
     dataloader = torch.utils.data.DataLoader(dataset,
                                              batch_size=batch_size,
                                              shuffle=False,
                                              drop_last=False,
                                              num_workers=num_workers)
 
-    pred_arr = np.empty((len(files), dims))
+    pred_arr = np.empty((len(dataset), dims))
 
     start_idx = 0
 
@@ -219,13 +251,16 @@ def calculate_activation_statistics(files, model, batch_size=50, dims=2048,
 
 def compute_statistics_of_path(path, model, batch_size, dims, device,
                                num_workers=1):
-    if path.endswith('.npz'):
+    if path is not None and path.endswith('.npz'):
         with np.load(path) as f:
             m, s = f['mu'][:], f['sigma'][:]
     else:
-        path = pathlib.Path(path)
-        files = sorted([file for ext in IMAGE_EXTENSIONS
-                       for file in path.glob('*.{}'.format(ext))])
+        if path is None:
+            files = None
+        else:
+            path = pathlib.Path(path)
+            files = sorted([file for ext in IMAGE_EXTENSIONS
+                           for file in path.glob('*.{}'.format(ext))])
         m, s = calculate_activation_statistics(files, model, batch_size,
                                                dims, device, num_workers)
 
@@ -243,23 +278,24 @@ def compute_statistics_of_files(files, model, batch_size, dims, device,
     return m, s
 
 
-def calculate_fid_given_paths(paths, batch_size, device, dims, num_workers=1):
+def calculate_fid_given_paths(paths, batch_size, device, dims, num_workers=1, m2=None, s2=None):
     """Calculates the FID of two paths"""
-    for p in paths:
-        if not os.path.exists(p):
-            raise RuntimeError('Invalid path: %s' % p)
+    # for p in paths:
+    #     if not os.path.exists(p):
+    #         raise RuntimeError('Invalid path: %s' % p)
 
     block_idx = InceptionV3.BLOCK_INDEX_BY_DIM[dims]
 
     model = InceptionV3([block_idx]).to(device)
 
-    m1, s1 = compute_statistics_of_path(paths[0], model, batch_size,
+    m1, s1 = compute_statistics_of_path(paths, model, batch_size,
                                         dims, device, num_workers)
-    m2, s2 = compute_statistics_of_path(paths[1], model, batch_size,
-                                        dims, device, num_workers)
+    if m2 is None and s2 is None:
+        m2, s2 = compute_statistics_of_path(None, model, batch_size,
+                                            dims, device, num_workers)
     fid_value = calculate_frechet_distance(m1, s1, m2, s2)
 
-    return fid_value
+    return fid_value, m2, s2
 
 def calculate_fid_given_files(gen_image_files, gt_image_files, batch_size, device, dims, num_workers=1):
     """Calculates the FID of two paths"""
@@ -267,12 +303,14 @@ def calculate_fid_given_files(gen_image_files, gt_image_files, batch_size, devic
 
     model = InceptionV3([block_idx]).to(device)
 
-    m1, s1 = compute_statistics_of_files(gen_image_files, model, batch_size,
-                                        dims, device, num_workers)
     gt_transforms = TF.Compose([
         TF.Resize((256, 256)),
         TF.ToTensor()
     ])
+
+    m1, s1 = compute_statistics_of_files(gen_image_files, model, batch_size,
+                                        dims, device, num_workers, gt_transforms)
+
     m2, s2 = compute_statistics_of_files(gt_image_files, model, batch_size,
                                         dims, device, num_workers, gt_transforms)
     fid_value = calculate_frechet_distance(m1, s1, m2, s2)
@@ -294,12 +332,40 @@ def main():
     else:
         num_workers = args.num_workers
 
-    fid_value = calculate_fid_given_paths(args.path,
-                                          args.batch_size,
-                                          device,
-                                          args.dims,
-                                          num_workers)
-    print('FID: ', fid_value)
+    list_k = [1, 10, 20, 50, 100, 1000]
+    fid_values = []
+    m2 = s2 = None
+    for k in list_k:
+        gan_folder = ""
+        if args.gan_type == "studiogan":
+            gan_folder = os.path.join(args.gan_type, args.gan_model_name)
+        if args.condition:
+            gan_folder += "_conditional" + "_k_" + str(k) + "_epoch_" + str(args.max_images)
+        load_folder = os.path.join(args.gen_dir, args.dataset_name, str(args.seed), gan_folder)
+
+        fid_value, m2, s2 = calculate_fid_given_paths(load_folder,
+                                              args.batch_size,
+                                              device,
+                                              args.dims,
+                                              num_workers, m2, s2)
+        fid_values.append(fid_value)
+        print('FID: ', fid_value)
+
+    plot_folder = os.path.join(args.plot_dir, args.dataset_name, str(args.seed),
+                               args.gan_type)
+    if not os.path.exists(plot_folder):
+        os.makedirs(plot_folder)
+    y = np.asarray(fid_values)
+    x = np.arange(1, y.shape[0] + 1)
+    list_k = [str(x) for x in list_k]
+    fig = plt.figure()
+    plt.plot(x, y)
+    plt.xlabel("Top k Labels")
+    plt.ylabel("FID score")
+
+    plt.xticks(x, list_k)
+    plot_path = os.path.join(plot_folder, f"fid v.s. top k labels.png")
+    fig.savefig(plot_path)
 
 if __name__ == '__main__':
     main()

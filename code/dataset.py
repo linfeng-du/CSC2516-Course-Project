@@ -13,11 +13,12 @@ import clip
 
 class BaseDataset(data.Dataset):
     def __init__(self, data_dir, dataset_name, comp_type, split,
-                 image_transform=None, tokenize=True):
+                 image_transform=None, tokenize=True, fid=False):
         self.data_dir = data_dir
         self.dataset_name = dataset_name
         self.comp_type = comp_type
         self.split = split
+        self.fid = fid
 
         anno_data_path = os.path.join(data_dir, dataset_name, comp_type, "data.pkl")
         with open(anno_data_path, "rb") as f:
@@ -135,6 +136,8 @@ class BaseDataset(data.Dataset):
 
         if self.image_transform is not None:
             image = self.image_transform(image)
+        if self.fid:
+            return image
 
         if self.tokenize:
             if len(text) > 70:
@@ -156,14 +159,16 @@ class CCUBDataset(BaseDataset):
                  image_transform=None,
                  tokenize=True,
                  images_txt_path=None,
-                 bbox_txt_path=None):
+                 bbox_txt_path=None,
+                 fid=False):
         super().__init__(
             data_dir,
             dataset_name,
             comp_type,
             split,
             image_transform,
-            tokenize
+            tokenize,
+            fid
         )
 
         if images_txt_path is not None and bbox_txt_path is not None:
@@ -219,7 +224,8 @@ class CFlowersDataset(BaseDataset):
                  split,
                  image_transform=None,
                  tokenize=True,
-                 class_id_txt_path=None):
+                 class_id_txt_path=None,
+                 fid=False):
         self.class_id_txt_path = class_id_txt_path
         super().__init__(
             data_dir,
@@ -227,7 +233,8 @@ class CFlowersDataset(BaseDataset):
             comp_type,
             split,
             image_transform,
-            tokenize
+            tokenize,
+            fid
         )
 
     def load_class_ids(self):
