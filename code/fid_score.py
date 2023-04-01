@@ -60,11 +60,13 @@ parser.add_argument('--dims', type=int, default=2048,
 parser.add_argument("--condition", action='store_true')
 parser.add_argument("--gen_dir", type=str, default="../gen/")
 parser.add_argument("--plot_dir", type=str, default="../plot/")
-parser.add_argument("--gan_type", type=str, default="studiogan")
+parser.add_argument("--gan_type", type=str, default="bigbigan")
 parser.add_argument("--gan_model_name", type=str, default="SAGAN")
 parser.add_argument("--seed", type=int, default=42)
 parser.add_argument("--dataset_name", type=str, default="C-CUB")
 parser.add_argument("--max_images", type=int, default=100)
+parser.add_argument("--threshold", type=float, default=0.27)
+parser.add_argument("--sigma", type=float, default=0.05)
 
 IMAGE_EXTENSIONS = {'bmp', 'jpg', 'jpeg', 'pgm', 'png', 'ppm',
                     'tif', 'tiff', 'webp'}
@@ -332,16 +334,20 @@ def main():
     else:
         num_workers = args.num_workers
 
-    list_k = [1, 10, 20, 50, 100, 1000]
+    list_k = [0, 1, 10]
     fid_values = []
     m2 = s2 = None
     for k in list_k:
-        gan_folder = ""
+        gan_folder = args.gan_type
         if args.gan_type == "studiogan":
             gan_folder = os.path.join(args.gan_type, args.gan_model_name)
         if args.condition:
             gan_folder += "_conditional" + "_k_" + str(k) + "_epoch_" + str(args.max_images)
+        else:
+            gan_folder += "_k_" + str(k) + "_t_" + str(args.threshold) + "_s_" + str(args.sigma) + "_epoch_" + str(args.max_images)
         load_folder = os.path.join(args.gen_dir, args.dataset_name, str(args.seed), gan_folder)
+        if not os.path.isdir(load_folder):
+            print("Can't find folder: " + load_folder)
 
         fid_value, m2, s2 = calculate_fid_given_paths(load_folder,
                                               args.batch_size,

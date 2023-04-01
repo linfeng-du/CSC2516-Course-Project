@@ -41,19 +41,25 @@ def get_imagenet_label(args, xmodel, image_ids, imagenet_label_dict):
     return labels
 
 
-def random_select_one_image(args, xmodel, val_dl, max_clip_score, imagenet_label_dict):
+def random_select_one_image(args, xmodel, val_dl, max_clip_score, heuristic_z):
     clip_scores = None
     cosine_sim = nn.CosineSimilarity(dim=-1)
     substitute = 0
+    zs = None
+    cnt = 0
     for images, tokenized_prompts, image_ids, caption_ids in tqdm(val_dl):
         tokenized_prompts = tokenized_prompts.to(xmodel.device)
         z_t = xmodel.get_text_latent_feature(tokenized_prompts).float()
         z = xmodel.gan_model.sample_latent(batch_size=val_dl.batch_size).to(xmodel.device)
-        if args.condition:
-            labels = get_imagenet_label(args, xmodel, image_ids, imagenet_label_dict)
-            gan_images = xmodel.gan_model(z=z, y=labels)
+        if args.k > 0:
+            heuristic_z_batch = heuristic_z[cnt * args.batch_size: cnt * args.batch_size + args.batch_size, :]
+            z = z * args.sigma + heuristic_z_batch
+            cnt += 1
+        if zs is None:
+            zs = z
         else:
-            gan_images = xmodel.gan_model(z)
+            zs = torch.cat((zs, z), dim=0)
+        gan_images = xmodel.gan_model(z)
         gan_images = xmodel.resize(gan_images)
         z_i = xmodel.get_image_latent_feature(gan_images)
 
@@ -71,7 +77,7 @@ def random_select_one_image(args, xmodel, val_dl, max_clip_score, imagenet_label
         else:
             clip_scores = torch.cat((clip_scores, clip_score))
 
-    return clip_scores.cpu(), substitute / clip_scores.shape[0]
+    return clip_scores.cpu(), substitute / clip_scores.shape[0], zs.cpu()
 
 
 def save_image(args, image, image_id):
@@ -181,18 +187,22 @@ def main(args):
     val_dl = get_dataloader("test", xmodel, args, shuffle=False)
 
     # Start training
+    args.gan_type += "_k_" + str(args.k) + "_t_" + str(args.threshold) + "_s_" + str(args.sigma)
     clip_scores = torch.zeros((args.max_images, args.batch_size * len(val_dl)))
     max_clip_score = {}
-    imagenet_label_dict = None
-    if args.condition:
-        args.gan_type += "_conditional" + "_k_" + str(args.k)
-        dict_path = os.path.join(args.data_dir, args.dataset_name, "imagenet_labels.pkl")
-        imagenet_label_dict = load_dict(dict_path)
+    heuristic_zs = torch.zeros((args.batch_size * len(val_dl), args.k, gan_model.dim_z)) if args.k > 0 else None
+    heuristic_clips = torch.ones((args.batch_size * len(val_dl), args.k, 1)) * args.threshold if args.k > 0 else None
     substitutes = []
     with torch.no_grad():
         for epoch in tqdm(range(args.max_images)):
             print(f"Epoch {epoch}")
-            clip_score, substitute_rate = random_select_one_image(args, xmodel, val_dl, max_clip_score, imagenet_label_dict)
+            heuristic_z = torch.mean(heuristic_zs, dim=1).to(device) if args.k > 0 else None
+            clip_score, substitute_rate, z = random_select_one_image(args, xmodel, val_dl, max_clip_score, heuristic_z)
+            if args.k > 0:
+                heuristic_clips = torch.cat((heuristic_clips, clip_score.unsqueeze(1).unsqueeze(1)), dim=1)
+                heuristic_zs = torch.cat((heuristic_zs, z.unsqueeze(1)), dim=1)
+                heuristic_clips, idxs = torch.topk(heuristic_clips, k=args.k, dim=1)
+                heuristic_zs = torch.gather(heuristic_zs, dim=1, index=idxs.expand(args.batch_size * len(val_dl), args.k, gan_model.dim_z))
             if epoch > 0:
                 mask = clip_score > clip_scores[epoch - 1]
                 clip_scores[epoch, mask] = clip_score[mask]
@@ -214,13 +224,12 @@ def main(args):
 def analysis(args):
     # Start testing
     dict = {}
-    list_k = [1, 10, 20, 50, 100, 1000]
+    list_k = [0, 1, 2, 5, 10]
     for k in list_k:
-        gan_folder = ""
+        gan_folder = args.gan_type
         if args.gan_type == "studiogan":
-            gan_folder= os.path.join(args.gan_type, args.gan_model_name)
-        if args.condition:
-            gan_folder += "_conditional" + "_k_" + str(k)
+            gan_folder = os.path.join(args.gan_type, args.gan_model_name)
+        gan_folder += "_k_" + str(k) + "_t_" + str(args.threshold) + "_s_" + str(args.sigma)
         load_folder = os.path.join(args.save_dir, args.dataset_name, str(args.seed), gan_folder)
         load_file_name = "max_images_" + str(args.max_images) + ".pt"
         load_path = os.path.join(load_folder, load_file_name)
@@ -255,17 +264,17 @@ def analysis(args):
 def get_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--test", action='store_true')
-    parser.add_argument("--condition", action='store_true')
-    parser.add_argument("--one_hot_label", action='store_true', help="set true when using one hot label")
     parser.add_argument("--gen_dir", type=str, default="../gen/")
     parser.add_argument("--plot_dir", type=str, default="../plot/")
     parser.add_argument("--save_dir", type=str, default="../checkpoint/")
-    parser.add_argument("--gan_type", type=str, default="studiogan")
+    parser.add_argument("--gan_type", type=str, default="bigbigan")
     parser.add_argument("--gan_model_name", type=str, default="SAGAN")
     parser.add_argument("--clip_type", type=str, default="ViT-B/32")
     parser.add_argument("--max_images", type=int, default=100)
-    parser.add_argument("--k", type=int, default=1000, help="top k imagenet labels to select from")
-    parser.add_argument("--seed", type=int, default=43)
+    parser.add_argument("--k", type=int, default=1, help="width of heuristic search")
+    parser.add_argument("--threshold", type=float, default=0.27)
+    parser.add_argument("--sigma", type=float, default=0.05)
+    parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--batch_size", help='batch size', type=int, default=64)
     parser.add_argument("--hidden_size", type=int, default=128)
     parser.add_argument("--lr", type=float, help="learning rate", default=1e-3)
