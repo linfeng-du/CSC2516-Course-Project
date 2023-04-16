@@ -60,7 +60,7 @@ parser.add_argument('--dims', type=int, default=2048,
 parser.add_argument("--condition", action='store_true')
 parser.add_argument("--gen_dir", type=str, default="../gen/")
 parser.add_argument("--plot_dir", type=str, default="../plot/")
-parser.add_argument("--gan_type", type=str, default="bigbigan")
+parser.add_argument("--gan_type", type=str, default="biggan")
 parser.add_argument("--gan_model_name", type=str, default="SAGAN")
 parser.add_argument("--seed", type=int, default=42)
 parser.add_argument("--dataset_name", type=str, default="C-CUB")
@@ -334,38 +334,49 @@ def main():
     else:
         num_workers = args.num_workers
 
-    list_k = [0, 1, 10]
-    fid_values = []
+    list_k = [1, 10, 20, 50, 100, 1000]
+    list_seed = [42, 43, 44]
+    fid_values = np.zeros((len(list_k), len(list_seed)))
     m2 = s2 = None
+    i_k = 0
     for k in list_k:
-        gan_folder = args.gan_type
-        if args.gan_type == "studiogan":
-            gan_folder = os.path.join(args.gan_type, args.gan_model_name)
-        if args.condition:
-            gan_folder += "_conditional" + "_k_" + str(k) + "_epoch_" + str(args.max_images)
-        else:
-            gan_folder += "_k_" + str(k) + "_t_" + str(args.threshold) + "_s_" + str(args.sigma) + "_epoch_" + str(args.max_images)
-        load_folder = os.path.join(args.gen_dir, args.dataset_name, str(args.seed), gan_folder)
-        if not os.path.isdir(load_folder):
-            print("Can't find folder: " + load_folder)
+        i_s = 0
+        for seed in list_seed:
+            gan_folder = args.gan_type
+            if args.gan_type == "studiogan":
+                gan_folder = os.path.join(args.gan_type, args.gan_model_name)
+            if args.condition:
+                gan_folder += "_conditional" + "_k_" + str(k) + "_epoch_" + str(args.max_images)
+            else:
+                gan_folder += "_k_" + str(k) + "_t_" + str(args.threshold) + "_s_" + str(args.sigma) + "_epoch_" + str(args.max_images)
+            load_folder = os.path.join(args.gen_dir, args.dataset_name, str(seed), gan_folder)
+            if not os.path.isdir(load_folder):
+                print("Can't find folder: " + load_folder)
 
-        fid_value, m2, s2 = calculate_fid_given_paths(load_folder,
-                                              args.batch_size,
-                                              device,
-                                              args.dims,
-                                              num_workers, m2, s2)
-        fid_values.append(fid_value)
-        print('FID: ', fid_value)
+            fid_value, m2, s2 = calculate_fid_given_paths(load_folder,
+                                                  args.batch_size,
+                                                  device,
+                                                  args.dims,
+                                                  num_workers, m2, s2)
+            fid_values[i_k, i_s] = fid_value
+            i_s += 1
+            print('FID: ', fid_value)
+        i_k += 1
 
     plot_folder = os.path.join(args.plot_dir, args.dataset_name, str(args.seed),
                                args.gan_type)
     if not os.path.exists(plot_folder):
         os.makedirs(plot_folder)
-    y = np.asarray(fid_values)
+    avg = np.mean(fid_values, axis=-1)
+    std = np.std(fid_values, axis=-1)
+    y = avg
     x = np.arange(1, y.shape[0] + 1)
     list_k = [str(x) for x in list_k]
     fig = plt.figure()
     plt.plot(x, y)
+    r1 = avg - std
+    r2 = avg + std
+    plt.fill_between(x, r1, r2, alpha=0.2)
     plt.xlabel("Top k Labels")
     plt.ylabel("FID score")
 

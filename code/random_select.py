@@ -37,7 +37,7 @@ def get_imagenet_label(args, xmodel, image_ids, imagenet_label_dict):
             labels[i] = random.choice(label_list)
 
     if args.one_hot_label:
-        labels = torch.eye(1000, dtype=torch.float, device=xmodel.device)[labels]
+        labels = torch.eye(1000, dtype=torch.float, device=xmodel.device)[labels.long()]
     return labels
 
 
@@ -213,18 +213,25 @@ def main(args):
 
 def analysis(args):
     # Start testing
+    titel_name = args.gan_type
     dict = {}
     list_k = [1, 10, 20, 50, 100, 1000]
+    list_seed = [42, 43, 44]
     for k in list_k:
-        gan_folder = ""
-        if args.gan_type == "studiogan":
-            gan_folder= os.path.join(args.gan_type, args.gan_model_name)
-        if args.condition:
-            gan_folder += "_conditional" + "_k_" + str(k)
-        load_folder = os.path.join(args.save_dir, args.dataset_name, str(args.seed), gan_folder)
-        load_file_name = "max_images_" + str(args.max_images) + ".pt"
-        load_path = os.path.join(load_folder, load_file_name)
-        dict[k] = torch.load(load_path)
+        for seed in list_seed:
+            gan_folder = args.gan_type
+            if args.gan_type == "studiogan":
+                titel_name = args.gan_model_name
+                gan_folder = os.path.join(args.gan_type, args.gan_model_name)
+            if args.condition:
+                gan_folder += "_conditional" + "_k_" + str(k)
+            load_folder = os.path.join(args.save_dir, args.dataset_name, str(seed), gan_folder)
+            load_file_name = "max_images_" + str(args.max_images) + ".pt"
+            load_path = os.path.join(load_folder, load_file_name)
+            if dict.get(k) is None:
+                dict[k] = torch.load(load_path).unsqueeze(1)
+            else:
+                dict[k] = torch.cat((dict[k], torch.load(load_path).unsqueeze(1)), dim=1)
 
     plot_folder = os.path.join(args.plot_dir, args.dataset_name, str(args.seed),
                                args.gan_type)
@@ -237,19 +244,55 @@ def analysis(args):
     i = 0
     for k in list_k:
         clip_scores = dict[k].numpy()
-        y = np.mean(clip_scores, axis=-1)
-        for num in range(y.shape[0]):
-            if y[num] > 0.2841796875:
-                print(f"k = {k}, need to select {num + 1} images")
-                break
+        clip_scores = np.mean(clip_scores, axis=-1)
+        avg = np.mean(clip_scores, axis=-1)
+        std = np.std(clip_scores, axis=-1)
+        y = avg
+        for run in range(clip_scores.shape[1]):
+            print(f"k = {k}, final best clip score {clip_scores[-1, run]:.6f}")
+            for num in range(clip_scores.shape[0]):
+                if clip_scores[num, run] > 0.2841796875:
+                    print(f"k = {k}, need to select {num + 1} images")
+                    break
         x = np.arange(1, y.shape[0] + 1)
         plt.plot(x, y, color=colors[i % len(colors)], label=f"k={k}")
+        r1 = avg - std
+        r2 = avg + std
+        plt.fill_between(x, r1, r2, color=colors[i % len(colors)], alpha=0.2)
         i += 1
     plt.legend()
+    plt.title(titel_name)
     plot_path = os.path.join(plot_folder, f"avg  best clip score v.s. num images.png")
     fig.savefig(plot_path)
 
 
+def get_caption(args):
+    # Claim the device
+    device = "cuda" if args.gpu and torch.cuda.is_available() else "cpu"
+    if args.gpu and not torch.cuda.is_available():
+        print("No GPU found, switching to CPU!")
+
+    # Initialize the pretrained model
+    clip_model, clip_preprocess = clip.load(args.clip_type, device=device)
+    if args.gan_type == "studiogan":
+        gan_model = make_gan(gan_type=args.gan_type, model_name=args.gan_model_name)
+        args.gan_type = os.path.join(args.gan_type, args.gan_model_name)
+    else:
+        gan_model = make_gan(gan_type=args.gan_type)
+
+    # Initialize the model to train
+    xmodel = XModel(
+        device,
+        clip_model,
+        gan_model,
+        args
+    ).to(device)
+
+    # Get the dataloader
+    # train_dl = get_dataloader("train", xmodel, args)
+    val_dl = get_dataloader("test", xmodel, args, shuffle=False)
+    captions = val_dl.dataset.anno_data["153.Philadelphia_Vireo/Philadelphia_Vireo_0038_794759"]
+    print(captions)
 
 
 def get_args():
@@ -260,13 +303,13 @@ def get_args():
     parser.add_argument("--gen_dir", type=str, default="../gen/")
     parser.add_argument("--plot_dir", type=str, default="../plot/")
     parser.add_argument("--save_dir", type=str, default="../checkpoint/")
-    parser.add_argument("--gan_type", type=str, default="studiogan")
+    parser.add_argument("--gan_type", type=str, default="biggan")
     parser.add_argument("--gan_model_name", type=str, default="SAGAN")
     parser.add_argument("--clip_type", type=str, default="ViT-B/32")
     parser.add_argument("--max_images", type=int, default=100)
-    parser.add_argument("--k", type=int, default=1000, help="top k imagenet labels to select from")
-    parser.add_argument("--seed", type=int, default=43)
-    parser.add_argument("--batch_size", help='batch size', type=int, default=64)
+    parser.add_argument("--k", type=int, default=10, help="top k imagenet labels to select from")
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--batch_size", help='batch size', type=int, default=16)
     parser.add_argument("--hidden_size", type=int, default=128)
     parser.add_argument("--lr", type=float, help="learning rate", default=1e-3)
     parser.add_argument("--gpu", action='store_true')
@@ -285,6 +328,7 @@ if __name__ == "__main__":
 
     args = get_args()
     seed_everything(seed=args.seed)
+    # get_caption(args)
     if args.test:
         analysis(args)
     else:
