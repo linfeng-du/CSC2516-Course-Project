@@ -1,5 +1,13 @@
 # CSC2516-Course-Project
 
+## Requirments
+```
+tqdm
+pandas
+pillow
+clip at https://github.com/openai/CLIP
+pretrained gans at https://github.com/lukemelas/pytorch-pretrained-gans
+```
 ## Preprae data
 1. Follow the instructions at https://github.com/Seth-Park/comp-t2i-dataset to download dataset.
 
