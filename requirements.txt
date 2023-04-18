@@ -1,3 +1,0 @@
-boto3==1.26.99
-openai-clip==1.0.1
-git+https://github.com/lukemelas/pytorch-pretrained-gans
